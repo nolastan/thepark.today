@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Golden Gate Park Events</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ical.js/1.5.0/ical.min.js"></script>
+    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+        
+        .sidebar {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            width: 300px;
+            max-height: calc(100vh - 40px);
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow-y: auto;
+        }
+        
+        .event-details {
+            display: none;
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 300px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 15px;
+        }
+        
+        .event-list {
+            padding: 15px;
+        }
+        
+        .event-item {
+            padding: 12px;
+            margin-bottom: 8px;
+            background: #f5f5f5;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        
+        .event-item:hover {
+            background: #ebebeb;
+        }
+        
+        .event-date {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 4px;
+        }
+        
+        .event-name {
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+        
+        .event-location {
+            font-size: 0.9em;
+            color: #666;
+        }
+
+        .sidebar-header {
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .sidebar-title {
+            margin: 0;
+            font-size: 1.2em;
+            color: #333;
+        }
+
+        .sidebar-subtitle {
+            margin: 5px 0 0 0;
+            font-size: 0.9em;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h2 class="sidebar-title">Upcoming Events</h2>
+            <p class="sidebar-subtitle">Next 7 days at Golden Gate Park</p>
+        </div>
+        <div class="event-list" id="eventList"></div>
+    </div>
+    <div class="event-details" id="eventDetails"></div>
+
+    <script>
+        // GGP location mappings
+        const LOCATIONS = {
+            'GGP-Bandshell/Music Concourse': [-122.469, 37.769],
+            'GGP-Robin Williams Meadow': [-122.459, 37.768],
+            'GGP-Ocean Beach': [-122.509, 37.769],
+            'GGP-Polo Fields': [-122.494, 37.767],
+            'GGP-Beach Chalet Soccer': [-122.505, 37.768],
+            'GGP-Botanical Gardens': [-122.468, 37.767],
+            'GGP-National AIDS Memorial Grove': [-122.461, 37.767],
+            'GGP-Hellman Hollow': [-122.478, 37.768],
+            'GGP-Lindley Meadow': [-122.475, 37.768],
+        };
+
+        // Initialize map
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: 'https://demotiles.maplibre.org/style.json',
+            center: [-122.475, 37.768], // Center of GGP
+            zoom: 14
+        });
+
+        map.addControl(new maplibregl.NavigationControl());
+
+        // Fetch and parse ICS data
+        async function fetchEvents() {
+            const calendarUrl = 'https://calendar.google.com/calendar/ical/efa68d00e20d3a9c176bb598885271f886a9e6fdc9616383d614323cd62f8366%40group.calendar.google.com/public/basic.ics';
+            
+            try {
+                const response = await fetch(calendarUrl);
+                const data = await response.text();
+                const jcalData = ICAL.parse(data);
+                const comp = new ICAL.Component(jcalData);
+                const vevents = comp.getAllSubcomponents('vevent');
+                
+                const events = [];
+                const now = new Date();
+                const nextWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+                vevents.forEach(vevent => {
+                    const event = new ICAL.Event(vevent);
+                    const startDate = event.startDate.toJSDate();
+                    
+                    if (startDate >= now && startDate <= nextWeek) {
+                        const location = event.location;
+                        const coords = getCoordinates(location);
+                        
+                        if (coords) {
+                            events.push({
+                                id: event.uid,
+                                name: event.summary,
+                                date: startDate,
+                                location: location,
+                                description: event.description,
+                                coordinates: coords
+                            });
+                        }
+                    }
+                });
+
+                return events.sort((a, b) => a.date - b.date);
+            } catch (error) {
+                console.error('Error fetching events:', error);
+                return [];
+            }
+        }
+
+        function getCoordinates(location) {
+            // Try to match location with our known coordinates
+            for (const [key, coords] of Object.entries(LOCATIONS)) {
+                if (location.includes(key)) {
+                    return coords;
+                }
+            }
+            return null;
+        }
+
+        function displayEvents(events) {
+            const eventList = document.getElementById('eventList');
+            const markers = [];
+
+            events.forEach(event => {
+                // Create list item
+                const eventElement = document.createElement('div');
+                eventElement.className = 'event-item';
+                eventElement.innerHTML = `
+                    <div class="event-date">${event.date.toLocaleDateString()}</div>
+                    <div class="event-name">${event.name}</div>
+                    <div class="event-location">${event.location}</div>
+                `;
+
+                // Create marker
+                const marker = new maplibregl.Marker({ color: '#FF4B4B' })
+                    .setLngLat(event.coordinates)
+                    .addTo(map);
+                
+                markers.push(marker);
+
+                // Add click handlers
+                function showEventDetails() {
+                    const detailsDiv = document.getElementById('eventDetails');
+                    detailsDiv.style.display = 'block';
+                    detailsDiv.innerHTML = `
+                        <h3>${event.name}</h3>
+                        <p><strong>${event.date.toLocaleDateString()}</strong></p>
+                        <p>${event.location}</p>
+                        ${event.description ? `<p>${event.description}</p>` : ''}
+                    `;
+
+                    map.flyTo({
+                        center: event.coordinates,
+                        zoom: 15,
+                        duration: 1000
+                    });
+                }
+
+                eventElement.addEventListener('click', showEventDetails);
+                marker.getElement().addEventListener('click', showEventDetails);
+
+                eventList.appendChild(eventElement);
+            });
+        }
+
+        // Initialize
+        fetchEvents().then(displayEvents);
+    </script>
+</body>
+</html>
